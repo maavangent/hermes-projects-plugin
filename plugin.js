@@ -127,6 +127,18 @@ function NewProject({ onCreated }) {
   const [name, setName] = useState('')
   const [folders, setFolders] = useState([])
   const cwd = useValue(host.state.cwd)
+  const addFolder = async () => {
+    if (typeof host.selectPaths !== 'function') {
+      host.notify({ kind: 'info', message: 'Folder selection requires a newer Hermes version.' })
+      return
+    }
+    try {
+      const selected = await host.selectPaths({ title: 'Choose project folder', directories: true, multiple: false, defaultPath: cwd || undefined })
+      if (selected?.[0] && !folders.includes(selected[0])) setFolders([...folders, selected[0]])
+    } catch (error) {
+      host.notifyError(error, 'Could not choose a project folder')
+    }
+  }
   const create = async () => {
     if (!name.trim()) return
     const created = await createProject(name.trim(), folders.length ? folders : (cwd ? [cwd] : []), onCreated)
@@ -140,7 +152,7 @@ function NewProject({ onCreated }) {
     jsxs(DialogContent, { className: 'max-w-lg', children: [
       jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: 'New project' }), jsx(DialogDescription, { children: 'Name a workspace and add one or more folders.' })] }),
       jsx(Input, { autoFocus: true, value: name, placeholder: 'e.g. Skunkworks', onChange: e => setName(e.target.value) }),
-      jsxs('section', { className: 'flex flex-col gap-2', children: [jsx('div', { className: 'text-xs text-(--ui-text-tertiary)', children: 'Folders' }), folders.length ? folders.map(folder => jsx('div', { key: folder, className: 'truncate text-sm', children: folder })) : jsx('div', { className: 'text-sm text-(--ui-text-quaternary)', children: 'No folders added yet.' }), jsx(Button, { variant: 'ghost', onClick: () => { if (cwd && !folders.includes(cwd)) setFolders([...folders, cwd]) }, children: '+ Add folder' })] }),
+      jsxs('section', { className: 'flex flex-col gap-2', children: [jsx('div', { className: 'text-xs text-(--ui-text-tertiary)', children: 'Folders' }), folders.length ? folders.map(folder => jsx('div', { key: folder, className: 'truncate text-sm', children: folder })) : jsx('div', { className: 'text-sm text-(--ui-text-quaternary)', children: 'No folders added yet.' }), jsx(Button, { variant: 'ghost', onClick: () => void addFolder(), children: '+ Add folder' })] }),
       jsxs(DialogFooter, { children: [jsx(Button, { variant: 'ghost', onClick: () => setOpen(false), children: 'Cancel' }), jsx(Button, { disabled: !name.trim(), onClick: () => void create(), children: 'Create' })] })
     ] })
   ] })
