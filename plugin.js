@@ -95,12 +95,42 @@ function openProject(id) {
 
 async function startSession(project) {
   const cwd = projectPath(project)
-  const result = await host.request('session.create', {
-    source: 'desktop',
-    cwd: cwd || undefined,
-    title: projectName(project)
-  })
-  await host.openSession(result.session_id, { intent: 'tab' })
+  const profile = (typeof host.state.profile?.get === 'function' ? host.state.profile.get() : '') || 'default'
+  const connectionId = (typeof host.state.connectionId?.get === 'function' ? host.state.connectionId.get() : '') || 'local'
+
+  if (project?.id) {
+    try {
+      await host.request('projects.set_active', { id: project.id })
+    } catch {
+      // Ignore if set_active is unsupported
+    }
+  }
+
+  try {
+    const result = await host.request('session.create', {
+      source: 'desktop',
+      cwd: cwd || undefined,
+      title: projectName(project)
+    })
+    const sessionId = result?.session_id || result?.stored_session_id
+    if (sessionId) {
+      await host.openSession(sessionId, {
+        intent: 'tab',
+        profile,
+        route: {
+          connectionId,
+          mode: 'local',
+          profile,
+          targetProfile: profile
+        }
+      })
+      return
+    }
+  } catch (error) {
+    host.notifyError(error, 'Could not create session in project folder')
+  }
+
+  host.newChat(profile)
 }
 
 function ProjectCard({ project }) {
@@ -128,12 +158,13 @@ function NewProject({ onCreated }) {
   const [folders, setFolders] = useState([])
   const cwd = useValue(host.state.cwd)
   const addFolder = async () => {
-    if (typeof host.selectPaths !== 'function') {
-      host.notify({ kind: 'info', message: 'Folder selection requires a newer Hermes version.' })
+    const pickPaths = (typeof host.selectPaths === 'function' ? host.selectPaths : null) || (typeof window !== 'undefined' && typeof window.hermes?.selectPaths === 'function' ? window.hermes.selectPaths : null)
+    if (!pickPaths) {
+      host.notify({ kind: 'info', message: 'Folder selection is not available in this window.' })
       return
     }
     try {
-      const selected = await host.selectPaths({ title: 'Choose project folder', directories: true, multiple: false, defaultPath: cwd || undefined })
+      const selected = await pickPaths({ title: 'Choose project folder', directories: true, multiple: false, defaultPath: cwd || undefined })
       if (selected?.[0] && !folders.includes(selected[0])) setFolders([...folders, selected[0]])
     } catch (error) {
       host.notifyError(error, 'Could not choose a project folder')
@@ -199,13 +230,44 @@ function ProjectDetail({ id }) {
   const project = data
   const sessions = (data?.repos || []).flatMap(repo => (repo.groups || []).flatMap(group => group.sessions || []))
   const sessionCount = sessions.length || data?.sessionCount || 0
+  const activeProfile = (typeof host.state.profile?.get === 'function' ? host.state.profile.get() : '') || 'default'
+  const activeConnectionId = (typeof host.state.connectionId?.get === 'function' ? host.state.connectionId.get() : '') || 'local'
+
   return jsxs('main', { className: 'projects-page flex h-full flex-col gap-5 overflow-auto p-8', children: [
     jsx(Button, { variant: 'ghost', className: 'self-start', onClick: () => { selectedProjectId.set(null); host.navigate(PAGE) }, children: '← Back to projects' }),
     jsxs('header', { className: 'flex items-center justify-between gap-4', children: [
       jsxs('div', { children: [jsx('h1', { className: 'text-xl font-semibold', children: projectName(project || data || {}) }), jsx('p', { className: 'mt-1 text-sm text-(--ui-text-tertiary)', children: `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}` })] }),
       jsx(Button, { onClick: () => startSession(project || data), children: 'New session' })
     ] }),
-    error ? jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'Could not load sessions.' }) : sessions.map(session => jsx('div', { className: 'flex items-start justify-between gap-4 rounded-md px-3 py-2 hover:bg-(--chrome-action-hover)', children: [jsxs('button', { type: 'button', className: 'min-w-0 flex-1 text-left', onClick: () => host.openSession(session.id, { intent: 'tab' }), children: [jsx('span', { className: 'block truncate text-sm', children: session.title || 'Untitled session' }), jsx('span', { className: 'mt-1 block truncate text-xs text-(--ui-text-tertiary)', children: session.preview || 'No preview' })] }), jsx('span', { className: 'shrink-0 text-xs text-(--ui-text-quaternary)', children: safeTime(session.last_active || session.started_at) })] })),
+    error ? jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'Could not load sessions.' }) : sessions.map(session => {
+      const profile = session.profile || activeProfile
+      const connectionId = session.connection_id || activeConnectionId
+      return jsx('div', {
+        key: session.id,
+        className: 'flex items-start justify-between gap-4 rounded-md px-3 py-2 hover:bg-(--chrome-action-hover)',
+        children: [
+          jsxs('button', {
+            type: 'button',
+            className: 'min-w-0 flex-1 text-left',
+            onClick: () => host.openSession(session.id, {
+              intent: 'tab',
+              profile,
+              route: {
+                connectionId,
+                mode: 'local',
+                profile,
+                targetProfile: profile
+              }
+            }),
+            children: [
+              jsx('span', { className: 'block truncate text-sm', children: session.title || 'Untitled session' }),
+              jsx('span', { className: 'mt-1 block truncate text-xs text-(--ui-text-tertiary)', children: session.preview || 'No preview' })
+            ]
+          }),
+          jsx('span', { className: 'shrink-0 text-xs text-(--ui-text-quaternary)', children: safeTime(session.last_active || session.started_at) })
+        ]
+      })
+    }),
     !error && data && !sessions.length ? jsx('div', { className: 'py-10 text-sm text-(--ui-text-tertiary)', children: 'No sessions in this project yet.' }) : null
   ] })
 }
